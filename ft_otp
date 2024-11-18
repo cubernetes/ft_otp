@@ -1,7 +1,23 @@
 #!/usr/bin/env python3
 
+import io
+import string
 import argparse
 
+def generate_keyfile(keyhexfile: io.TextIOWrapper) -> None:
+    hex = keyhexfile.read().strip().lower()
+    if len(hex) < 64:
+        print('Error: keyhexfile must contain at least 64 characters')
+        raise SystemExit(1)
+    if not all(c in string.hexdigits for c in hex):
+        print('Error: keyhexfile must contain only hexadecimal digits (up to leading/trailing whitespace)')
+        raise SystemExit(1)
+    # with open('ft_otp.key', 'wb') as keyfile:
+    #     keyfile.write(b'wtf')
+
+
+def generate_totp(keyfile: io.TextIOWrapper) -> None:
+    pass
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -10,7 +26,14 @@ if __name__ == '__main__':
         usage='%(prog)s [-g <hexkeyfile> | -k <keyfile>]'
     )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('-g', '--generate-keyfile', metavar='<keyhexfile>', type=argparse.FileType('r'), help='Generate keyfile from a file that contains at least 64 hexadecimal digits')
-    group.add_argument('-k', '--generate-totp', metavar='<keyfile>', type=argparse.FileType('r'), help='Generate a new TOTP code using the keyfile')
+    group.add_argument('-g', '--digest', metavar='<hexkeyfile>', type=argparse.FileType('r'), help='Generate a hexdigest keyfile from a file that contains at least 64 hexadecimal digits')
+    group.add_argument('-k', '--hotp', metavar='<keyfile>', type=argparse.FileType('r'), help='Generate a new TOTP code using the hexdigest keyfile')
 
-    parser.parse_args()
+    args = parser.parse_args()
+
+    if args.generate_keyfile:
+        generate_keyfile(args.generate_keyfile)
+    elif args.generate_totp:
+        generate_totp(args.generate_totp)
+    else:
+        print('Error: Either -g/--digest or -k/--hotp is required')
