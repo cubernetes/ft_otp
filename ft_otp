@@ -1,3 +1,16 @@
 #!/usr/bin/env python3
 
+import argparse
 
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        prog='ft_otp',
+        description='',
+        usage='%(prog)s [-g <hexkeyfile> | -k <keyfile>]'
+    )
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('-g', '--generate-keyfile', metavar='<keyhexfile>', type=argparse.FileType('r'), help='Generate keyfile from a file that contains at least 64 hexadecimal digits')
+    group.add_argument('-k', '--generate-totp', metavar='<keyfile>', type=argparse.FileType('r'), help='Generate a new TOTP code using the keyfile')
+
+    parser.parse_args()
