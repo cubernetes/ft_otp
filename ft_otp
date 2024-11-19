@@ -3,21 +3,62 @@
 import io
 import string
 import argparse
+import hmac
+import hashlib
+import struct
+import time
+
+DIGIT = 6
+X = 30
+T0 = 0
 
 def generate_keyfile(keyhexfile: io.TextIOWrapper) -> None:
-    hex = keyhexfile.read().strip().lower()
-    if len(hex) < 64:
+    hexstring = keyhexfile.read().strip().lower() # aka shared secret or K
+    if len(hexstring) < 64:
         print('Error: keyhexfile must contain at least 64 characters')
         raise SystemExit(1)
-    if not all(c in string.hexdigits for c in hex):
+    if not all(c in string.hexdigits for c in hexstring):
         print('Error: keyhexfile must contain only hexadecimal digits (up to leading/trailing whitespace)')
         raise SystemExit(1)
-    # with open('ft_otp.key', 'wb') as keyfile:
-    #     keyfile.write(b'wtf')
+    time_step = X
+    unix_start = T0
+    unix_epoch = int(time.time()) # now
+    counter_value = int((unix_epoch - unix_start) // time_step) # integer flooring, according to rfc. aka moving factor
+    packed_counter_value = struct.pack('>Q', counter_value & 0xffffffffffffffff) # remember, rfc4226 says 8 BYTE, not BIT, for the counter value
+    # using bytes.fromhex, instead of taking the input as the literal key. ambiguous from subject...
+    digest = hmac.digest(bytes.fromhex(hexstring), packed_counter_value, hashlib.sha1) # HMAC-SHA-1 digest
+    with open('ft_otp.key', 'wb') as keyfile: # serialize the digest in a file. it will always generate the same OTP. subject says "encrypt", but wtf this would be out of scope for the subject, isn't this about RFC6328 and RFC4226?
+        keyfile.write(digest)
 
+def print_bytes(bs: bytes, offset: int) -> None:
+    for i, byte in enumerate(bs):
+        if i in range(offset, offset + 4):
+            print(end='\x1b[41;30m')
+        print(end=f'{str(byte).zfill(3)}, ')
+        if i in range(offset, offset + 4):
+            print(end='\x1b[m')
+    print()
 
-def generate_totp(keyfile: io.TextIOWrapper) -> None:
-    pass
+def dynamic_truncation(sha1_digest: bytes) -> bytes:
+    last_byte = sha1_digest[19]
+    offset = last_byte & 0xf # 4 least-significant bits, offset bits
+    # print_bytes(sha1_digest, offset)
+    P = (sha1_digest[offset + 0] & 0x7f) << 24 \
+      | (sha1_digest[offset + 1] & 0xff) << 16 \
+      | (sha1_digest[offset + 2] & 0xff) << 8  \
+      | (sha1_digest[offset + 3] & 0xff)
+    # /\ masking the 31st (most significant bit) to avoid signed vs. unsigned errors
+    return P
+
+def generate_totp(keyfile: io.BufferedReader) -> None:
+    hmac_sha1_digest = keyfile.read() # aka HS
+    if len(hmac_sha1_digest) != 20:
+        print("Error: HMAC-SHA-1 digest is not 20 bytes")
+        raise SystemExit(1)
+    sbits = dynamic_truncation(hmac_sha1_digest) # 4 bytes (masked to 31 bits)
+    snum = int(sbits)
+    D = snum % 10**DIGIT
+    print(str(D).zfill(DIGIT))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -27,13 +68,13 @@ if __name__ == '__main__':
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-g', '--digest', metavar='<hexkeyfile>', type=argparse.FileType('r'), help='Generate a hexdigest keyfile from a file that contains at least 64 hexadecimal digits')
-    group.add_argument('-k', '--hotp', metavar='<keyfile>', type=argparse.FileType('r'), help='Generate a new TOTP code using the hexdigest keyfile')
+    group.add_argument('-k', '--hotp', metavar='<keyfile>', type=argparse.FileType('rb'), help='Generate a new TOTP code using the hexdigest keyfile')
 
     args = parser.parse_args()
 
-    if args.generate_keyfile:
-        generate_keyfile(args.generate_keyfile)
-    elif args.generate_totp:
-        generate_totp(args.generate_totp)
+    if args.digest:
+        generate_keyfile(args.digest)
+    elif args.hotp:
+        generate_totp(args.hotp)
     else:
         print('Error: Either -g/--digest or -k/--hotp is required')
