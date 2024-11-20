@@ -8,7 +8,10 @@ import hmac
 import hashlib
 import struct
 import time
+import base64
+
 from cryptography.fernet import Fernet
+from qrcode.main import QRCode
 
 DIGIT = 6
 X = 30
@@ -34,10 +37,10 @@ def generate_keyfile(keyhexfile: io.TextIOWrapper) -> None:
 def print_bytes(bs: bytes, offset: int) -> None:
     for i, byte in enumerate(bs):
         if i in range(offset, offset + 4):
-            print(end='\x1b[41;30m')
+            print(end='\x1b\x5b41;30m')
         print(end=f'{str(byte).zfill(3)}, ')
         if i in range(offset, offset + 4):
-            print(end='\x1b[m')
+            print(end='\x1b\x5bm')
     print()
 
 def dynamic_truncation(sha1_digest: bytes) -> int:
@@ -72,8 +75,16 @@ def generate_totp(keyfile: io.BufferedReader) -> None:
     D = snum % 10**DIGIT
     print(str(D).zfill(DIGIT))
 
-def print_random_hexstring() -> None:
-    print(os.urandom(32).hex())
+def get_random_hexstring() -> str:
+    return os.urandom(32).hex()
+
+def generate_qr():
+    hexstring = get_random_hexstring()
+    generate_keyfile(io.StringIO(hexstring))
+    base32_secret = base64.b32encode(bytes.fromhex(hexstring)).decode('utf-8')
+    qr = QRCode()
+    qr.add_data(f'otpauth://totp/ft_otp:alice@ft_acme.com?secret={base32_secret}')
+    qr.print_ascii()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -82,20 +93,21 @@ if __name__ == '__main__':
         usage='%(prog)s ( (-g <hexkeyfile> | -k <keyfile>) | --hex-key )'
     )
 
-    group_parent = parser.add_mutually_exclusive_group(required=True)
-    group_parent.add_argument('--hex-key', action='store_true', help='Generate a random 64 character hexstring')
-    group = group_parent.add_mutually_exclusive_group()
-    group.add_argument('-g', '--digest', metavar='<hexkeyfile>', type=argparse.FileType('r'), help='Generate a hexdigest keyfile from a file that contains at least 64 hexadecimal digits')
-    group.add_argument('-k', '--hotp', metavar='<keyfile>', type=argparse.FileType('rb'), help='Generate a new TOTP code using the hexdigest keyfile')
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--hex-key', action='store_true', help='Generate a random 64 character hexstring')
+    group.add_argument('-g', '--save', metavar='<hexkeyfile>', type=argparse.FileType('r'), help='Save an encrypted version of a key in a file')
+    group.add_argument('-k', '--hotp', metavar='<keyfile>', type=argparse.FileType('rb'), help='Generate a new TOTP code using the encrypted keyfile')
+    group.add_argument('--qr', action='store_true', help='Generate a QR-code for provisioning')
 
     args = parser.parse_args()
 
     if args.hex_key:
-        print_random_hexstring()
+        print(get_random_hexstring())
+    elif args.save:
+        generate_keyfile(args.save)
+    elif args.hotp:
+        generate_totp(args.hotp)
+    elif args.qr:
+        generate_qr()
     else:
-        if args.digest:
-            generate_keyfile(args.digest)
-        elif args.hotp:
-            generate_totp(args.hotp)
-        else:
-            print('Error: Either -g/--digest or -k/--hotp is required')
+        print('Error: Either -g/--digest or -k/--hotp is required')
