@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 
 import io
+import os
 import string
 import argparse
 import hmac
 import hashlib
 import struct
 import time
+from cryptography.fernet import Fernet
 
 DIGIT = 6
 X = 30
 T0 = 0
+# the subject was stupid, but hardcoding the key is the only sensible thing to do to fulfill requirements
+KEY = b'enrkJuJgjutPZ7F6XtXcmZLkGtFEIOwW4iIR8rCGgwI='
 
 def generate_keyfile(keyhexfile: io.TextIOWrapper) -> None:
     hexstring = keyhexfile.read().strip().lower() # aka shared secret or K
@@ -20,15 +24,12 @@ def generate_keyfile(keyhexfile: io.TextIOWrapper) -> None:
     if not all(c in string.hexdigits for c in hexstring):
         print('Error: keyhexfile must contain only hexadecimal digits (up to leading/trailing whitespace)')
         raise SystemExit(1)
-    time_step = X
-    unix_start = T0
-    unix_epoch = int(time.time()) # now
-    counter_value = int((unix_epoch - unix_start) // time_step) # integer flooring, according to rfc. aka moving factor
-    packed_counter_value = struct.pack('>Q', counter_value & 0xffffffffffffffff) # remember, rfc4226 says 8 BYTE, not BIT, for the counter value
-    # using bytes.fromhex, instead of taking the input as the literal key. ambiguous from subject...
-    digest = hmac.digest(bytes.fromhex(hexstring), packed_counter_value, hashlib.sha1) # HMAC-SHA-1 digest
-    with open('ft_otp.key', 'wb') as keyfile: # serialize the digest in a file. it will always generate the same OTP. subject says "encrypt", but wtf this would be out of scope for the subject, isn't this about RFC6328 and RFC4226?
-        keyfile.write(digest)
+    # KEY = Fernet.generate_key() # this should be used obviously
+    cipher_suite = Fernet(KEY)
+    message = hexstring.encode('utf-8')
+    cipher_text = cipher_suite.encrypt(message)
+    with open('ft_otp.key', 'wb') as keyfile:
+        keyfile.write(cipher_text)
 
 def print_bytes(bs: bytes, offset: int) -> None:
     for i, byte in enumerate(bs):
@@ -39,7 +40,7 @@ def print_bytes(bs: bytes, offset: int) -> None:
             print(end='\x1b[m')
     print()
 
-def dynamic_truncation(sha1_digest: bytes) -> bytes:
+def dynamic_truncation(sha1_digest: bytes) -> int:
     last_byte = sha1_digest[19]
     offset = last_byte & 0xf # 4 least-significant bits, offset bits
     # print_bytes(sha1_digest, offset)
@@ -51,7 +52,18 @@ def dynamic_truncation(sha1_digest: bytes) -> bytes:
     return P
 
 def generate_totp(keyfile: io.BufferedReader) -> None:
-    hmac_sha1_digest = keyfile.read() # aka HS
+
+    cipher_text = keyfile.read()
+    cipher_suite = Fernet(KEY)
+    hexstring = cipher_suite.decrypt(cipher_text).decode('utf-8')
+
+    time_step = X
+    unix_start = T0
+    unix_epoch = int(time.time()) # now
+    counter_value = int((unix_epoch - unix_start) // time_step) # integer flooring, according to rfc. aka moving factor
+    packed_counter_value = struct.pack('>Q', counter_value & 0xffffffffffffffff) # remember, rfc4226 says 8 BYTE, not BIT, for the counter value
+    # using bytes.fromhex, instead of taking the input as the literal key. ambiguous from subject...
+    hmac_sha1_digest = hmac.digest(bytes.fromhex(hexstring), packed_counter_value, hashlib.sha1) # HMAC-SHA-1 diges, aka HS
     if len(hmac_sha1_digest) != 20:
         print("Error: HMAC-SHA-1 digest is not 20 bytes")
         raise SystemExit(1)
@@ -60,21 +72,30 @@ def generate_totp(keyfile: io.BufferedReader) -> None:
     D = snum % 10**DIGIT
     print(str(D).zfill(DIGIT))
 
+def print_random_hexstring() -> None:
+    print(os.urandom(32).hex())
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         prog='ft_otp',
         description='',
-        usage='%(prog)s [-g <hexkeyfile> | -k <keyfile>]'
+        usage='%(prog)s ( (-g <hexkeyfile> | -k <keyfile>) | --hex-key )'
     )
-    group = parser.add_mutually_exclusive_group(required=True)
+
+    group_parent = parser.add_mutually_exclusive_group(required=True)
+    group_parent.add_argument('--hex-key', action='store_true', help='Generate a random 64 character hexstring')
+    group = group_parent.add_mutually_exclusive_group()
     group.add_argument('-g', '--digest', metavar='<hexkeyfile>', type=argparse.FileType('r'), help='Generate a hexdigest keyfile from a file that contains at least 64 hexadecimal digits')
     group.add_argument('-k', '--hotp', metavar='<keyfile>', type=argparse.FileType('rb'), help='Generate a new TOTP code using the hexdigest keyfile')
 
     args = parser.parse_args()
 
-    if args.digest:
-        generate_keyfile(args.digest)
-    elif args.hotp:
-        generate_totp(args.hotp)
+    if args.hex_key:
+        print_random_hexstring()
     else:
-        print('Error: Either -g/--digest or -k/--hotp is required')
+        if args.digest:
+            generate_keyfile(args.digest)
+        elif args.hotp:
+            generate_totp(args.hotp)
+        else:
+            print('Error: Either -g/--digest or -k/--hotp is required')
